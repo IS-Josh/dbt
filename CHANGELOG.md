@@ -1,7 +1,10 @@
 ## dbt 0.21.0 (Release TBD)
 
-## dbt 0.21.0b1 (August 03, 2021)
+### Features
+- Enable setting configs in schema files for models, seeds, snapshots, analyses, tests ([#2401](https://github.com/dbt-labs/dbt/issues/2401), [#3616](https://github.com/dbt-labs/dbt/pull/3616))
 
+
+## dbt 0.21.0b1 (August 03, 2021)
 
 ### Breaking changes
 - Add full node selection to source freshness command and align selection syntax with other tasks (`dbt source freshness --select source_name` --> `dbt source freshness --select source:souce_name`) and rename `dbt source snapshot-freshness` -> `dbt source freshness`. ([#2987](https://github.com/dbt-labs/dbt/issues/2987), [#3554](https://github.com/dbt-labs/dbt/pull/3554))

@@ -1,6 +1,8 @@
 import agate
 from typing import Any, Optional, Tuple, Type, List
-
+from dbt.contracts.connection import (
+    Connection, ConnectionState, AdapterResponse
+)
 import dbt.clients.agate_helper
 from dbt.contracts.connection import Connection
 import dbt.exceptions

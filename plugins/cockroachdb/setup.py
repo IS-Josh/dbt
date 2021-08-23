@@ -18,37 +18,60 @@ except ImportError:
           'and try again')
     sys.exit(1)
 
+
+PSYCOPG2_MESSAGE = '''
+No package name override was set.
+Using 'psycopg2-binary' package to satisfy 'psycopg2'
+
+If you experience segmentation faults, silent crashes, or installation errors,
+consider retrying with the 'DBT_PSYCOPG2_NAME' environment variable set to
+'psycopg2'. It may require a compiler toolchain and development libraries!
+'''.strip()
+
+
+def _dbt_psycopg2_name():
+    # if the user chose something, use that
+    package_name = os.getenv('DBT_PSYCOPG2_NAME', '')
+    if package_name:
+        return package_name
+
+    # default to psycopg2-binary for all OSes/versions
+    print(PSYCOPG2_MESSAGE)
+    return 'psycopg2-binary'
+
+
+package_name = "dbt-cockroachdb"
+package_version = "0.21.0b1"
+description = """The cockroachdb adpter plugin for dbt (data build tool)"""
+
 this_directory = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(this_directory, 'README.md')) as f:
     long_description = f.read()
 
-
-package_name = "dbt"
-package_version = "0.21.0rc1"
-description = """With dbt, data analysts and engineers can build analytics \
-the way engineers build applications."""
-
+DBT_PSYCOPG2_NAME = _dbt_psycopg2_name()
 
 setup(
     name=package_name,
     version=package_version,
-
     description=description,
-    long_description=long_description,
+    long_description=description,
     long_description_content_type='text/markdown',
-
-    author="dbt Labs",
-    author_email="info@dbtlabs.com",
+    author="Joshua Turci adapted from the postgres adapter by dbt Labs",
+    author_email="josh@intellischool.co",
     url="https://github.com/dbt-labs/dbt",
-    packages=[],
+    packages=find_namespace_packages(include=['dbt', 'dbt.*']),
+    package_data={
+        'dbt': [
+            'include/cockroachdb/dbt_project.yml',
+            'include/cockroachdb/sample_profiles.yml',
+            'include/cockroachdb/macros/*.sql',
+            'include/cockroachdb/macros/**/*.sql',
+        ]
+    },
     install_requires=[
         'dbt-core=={}'.format(package_version),
+        '{}~=2.8'.format(DBT_PSYCOPG2_NAME),
         'dbt-postgres=={}'.format(package_version),
-        'dbt-redshift=={}'.format(package_version),
-        'dbt-snowflake=={}'.format(package_version),
-        'dbt-bigquery=={}'.format(package_version),
-        'dbt-cockroachdb=={}'.format(package_version),
-     
     ],
     zip_safe=False,
     classifiers=[

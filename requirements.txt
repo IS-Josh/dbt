@@ -3,3 +3,4 @@
 ./plugins/redshift
 ./plugins/snowflake
 ./plugins/bigquery
+./plugins/cockroachdb

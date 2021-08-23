@@ -1,28 +1,36 @@
-from dataclasses import dataclass
+from multiprocessing import Lock
 from contextlib import contextmanager
-from dbt.adapters.base import Credentials
+from typing import Optional , Tuple, Any, Union,List
 from dbt.adapters.sql import SQLConnectionManager
-import time
-import psycopg2 
-import dbt.exceptions
 from dbt.adapters.base import Credentials
-from dbt.adapters.sql import SQLConnectionManager
-from dbt.contracts.connection import AdapterResponse
 from dbt.logger import GLOBAL_LOGGER as logger
+import dbt.exceptions
+import dbt.flags
+from dbt import flags
+from dataclasses import dataclass,field
+#from dbt.dataclass_schema import FieldEncoder, dbtClassMixin, StrEnum
+import psycopg2
+
+
+#from dbt.adapters.sql import SQLConnectionManager
+
+import time
+import agate
 from dbt.helper_types import Port
-from dataclasses import dataclass
-from typing import Optional , Tuple, Any   
 from dbt.contracts.connection import (
-    Connection,  AdapterResponse
+      Connection,
+      AdapterResponse
 )
+drop_lock: Lock = dbt.flags.MP_CONTEXT.Lock()
+
 
 
 @dataclass
-class CockraochDBCredentials(Credentials):
+class CockroachDBCredentials(Credentials):
     host: str
     user: str
     port: Port
-    password: str  # on postgres the password is mandatory
+    password: str  # on cockroachdb the password is mandatory
     role: Optional[str] = None
     search_path: Optional[str] = None
     keepalives_idle: int = 0  # 0 means to use the default value
@@ -41,7 +49,7 @@ class CockraochDBCredentials(Credentials):
 
     @property
     def type(self):
-        return 'cockraochdb'
+        return 'cockroachdb'
 
     def _connection_keys(self):
         return ('host', 'port', 'user', 'database', 'schema', 'search_path',
@@ -49,16 +57,38 @@ class CockraochDBCredentials(Credentials):
 
 
 
-class CockraochDBConnectionManager(SQLConnectionManager):
-    TYPE = 'cockraochdb'
+class CockroachDBConnectionManager(SQLConnectionManager):
+    TYPE = 'cockroachdb'
 
     @contextmanager
+    # def fresh_transaction(self, name=None):
+    #     """On entrance to this context manager, hold an exclusive lock and
+    #     create a fresh transaction for redshift, then commit and begin a new
+    #     one before releasing the lock on exit.
+
+    #     See drop_relation in RedshiftAdapter for more information.
+
+    #     :param Optional[str] name: The name of the connection to use, or None
+    #         to use the default.
+    #     """
+    #     with drop_lock:
+    #         connection = self.get_thread_connection()
+
+    #         if connection.transaction_open:
+    #             self.commit()
+
+    #         self.begin()
+    #         yield
+
+    #         self.commit()
+    #         self.begin()   
+    
     def exception_handler(self, sql):
         try:
             yield
 
         except psycopg2.DatabaseError as e:
-            logger.debug('Postgres error: {}'.format(str(e)))
+            logger.debug('CockroachDB error: {}'.format(str(e)))
 
             try:
                 self.rollback_if_open()
@@ -80,6 +110,10 @@ class CockraochDBConnectionManager(SQLConnectionManager):
 
             raise dbt.exceptions.RuntimeException(e) from e
 
+
+
+    
+
     @classmethod
     def open(cls, connection):
         if connection.state == 'open':
@@ -88,7 +122,7 @@ class CockraochDBConnectionManager(SQLConnectionManager):
 
         credentials = cls.get_credentials(connection.credentials)
         kwargs = {}
-        # we don't want to pass 0 along to connect() as postgres will try to
+        # we don't want to pass 0 along to connect() as Cockraochdb will try to
         # call an invalid setsockopt() call (contrary to the docs).
         if credentials.keepalives_idle:
             kwargs['keepalives_idle'] = credentials.keepalives_idle
@@ -125,14 +159,15 @@ class CockraochDBConnectionManager(SQLConnectionManager):
                 port=credentials.port,
                 connect_timeout=10,
                 **kwargs)
-
+            
+            
             if credentials.role:
                 handle.cursor().execute('set role {}'.format(credentials.role))
 
             connection.handle = handle
             connection.state = 'open'
         except psycopg2.Error as e:
-            logger.debug("Got an error when attempting to open a postgres "
+            logger.debug("Got an error when attempting to open a cockroachdb "
                          "connection: '{}'"
                          .format(e))
 
@@ -172,12 +207,13 @@ class CockraochDBConnectionManager(SQLConnectionManager):
     def add_query(
         self,
         sql: str,
-        auto_begin: bool = False,
+        auto_begin: bool = True,
         bindings: Optional[Any] = None,
         abridge_sql_log: bool = False
     ) -> Tuple[Connection, Any]:
         connection = self.get_thread_connection()
         if auto_begin and connection.transaction_open is False:
+            
             self.begin()
 
         logger.debug('Using {} connection "{}".'
@@ -229,3 +265,63 @@ class CockraochDBConnectionManager(SQLConnectionManager):
             code=code,
             rows_affected=rows
         )
+
+
+    def add_begin_query(self):
+        return self.add_query("select 'NOT_ADDING_BEGIN_FOR_CRDB_TESTING'", auto_begin=False)
+
+    def add_commit_query(self):
+        return self.add_query('COMMIT', auto_begin=False)
+
+    def begin(self):
+        connection = self.get_thread_connection()
+
+        if flags.STRICT_MODE:
+            if not isinstance(connection, Connection):
+                raise dbt.exceptions.CompilerException(
+                    f'In begin, got {connection} - not a Connection!'
+                )
+
+        if connection.transaction_open is True:
+            raise dbt.exceptions.InternalException(
+                'Tried to begin a new transaction on connection "{}", but '
+                'it already had one open!'.format(connection.name))
+
+        self.add_begin_query()
+
+        connection.transaction_open = True
+        return connection
+
+
+    def execute(
+        self, sql: str, auto_begin: bool = False, fetch: bool = False
+    ) -> Tuple[Union[AdapterResponse, str], agate.Table]:
+        sql = self._add_query_comment(sql)
+        _, cursor = self.add_query(sql, auto_begin)
+        response = self.get_response(cursor)
+        if fetch:
+            table = self.get_result_from_cursor(cursor)
+        else:
+            table = dbt.clients.agate_helper.empty_table()
+        return response, table
+
+
+    def commit(self):
+        connection = self.get_thread_connection()
+        if flags.STRICT_MODE:
+            if not isinstance(connection, Connection):
+                raise dbt.exceptions.CompilerException(
+                    f'In commit, got {connection} - not a Connection!'
+                )
+
+        if connection.transaction_open is False:
+            raise dbt.exceptions.InternalException(
+                'Tried to commit transaction on connection "{}", but '
+                'it does not have one open!'.format(connection.name))
+
+        logger.debug('On {}: COMMIT'.format(connection.name))
+        self.add_commit_query()
+
+        connection.transaction_open = False
+
+        return connection   

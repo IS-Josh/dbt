@@ -1,32 +1,25 @@
-from dbt.adapters.sql import SQLAdapter
-from dbt.adapters.cockraochdb import CockraochDBConnectionManager
 from dataclasses import dataclass
-from dbt.adapters.base import (
-    BaseAdapter, available, RelationType, SchemaSearchMap, AdapterConfig
-)
-class CockraochDBAdapter(SQLAdapter):
-    ConnectionManager = CockraochDBConnectionManager
 from typing import Dict, List, Optional, Any, Set, Union,Tuple
-
-
-
-from datetime import datetime
-from dataclasses import dataclass
-from typing import Optional, Set, List, Any
-from dbt.adapters.base.meta import available
 from dbt.adapters.base.impl import AdapterConfig
 from dbt.adapters.sql import SQLAdapter
-from dbt.contracts.connection import Connection
-from dbt.adapters.cockraochdb import CockroachDBConnectionManager
-from dbt.adapters.cockraochdb import CockroachDBColumn
-from dbt.adapters.cockraochdb import CockroachDBRelation
-from dbt.dataclass_schema import dbtClassMixin, ValidationError
+from dbt.adapters.base.meta import available
+from dbt.adapters.postgres import PostgresAdapter
+from dbt.adapters.cockroachdb import CockroachDBConnectionManager
+from dbt.adapters.cockroachdb import CockroachDBColumn
+from dbt.adapters.cockroachdb import CockroachDBRelation
+from dbt.logger import GLOBAL_LOGGER as logger  # noqa
 import dbt.exceptions
-import dbt.utils
 
+from dbt.dataclass_schema import dbtClassMixin, ValidationError
+from datetime import datetime
+from dbt.contracts.connection import Connection
+
+import dbt.utils
+#from dbt.adapters.base.meta import available
+#from dbt.adapters.base.impl import AdapterConfig
 
 # note that this isn't an adapter macro, so just a single underscore
-GET_RELATIONS_MACRO_NAME = 'CockroachDB_get_relations'
+GET_RELATIONS_MACRO_NAME = 'cockroachdb_get_relations'
 
 
 @dataclass
@@ -45,6 +38,9 @@ class CockroachDBIndexConfig(dbtClassMixin):
                   [relation.render(), str(self.unique), str(self.type), now])
         string = '_'.join(inputs)
         return dbt.utils.md5(string)
+
+
+   
 
     @classmethod
     def parse(cls, raw_index) -> Optional['CockroachDBIndexConfig']:
@@ -72,16 +68,46 @@ class CockroachDBConfig(AdapterConfig):
     indexes: Optional[List[CockroachDBIndexConfig]] = None
 
 
-class CockroachDBAdapter(SQLAdapter):
+
+
+class CockroachDBAdapter(PostgresAdapter,SQLAdapter):
     Relation = CockroachDBRelation
     ConnectionManager = CockroachDBConnectionManager
     Column = CockroachDBColumn
 
     AdapterSpecificConfigs = CockroachDBConfig
 
+
+
+
+
     @classmethod
     def date_function(cls):
         return 'now()'
+
+
+
+    # def drop_relation(self, relation):
+    #     """
+    #     In Redshift, DROP TABLE ... CASCADE should not be used
+    #     inside a transaction. Redshift doesn't prevent the CASCADE
+    #     part from conflicting with concurrent transactions. If we do
+    #     attempt to drop two tables with CASCADE at once, we'll often
+    #     get the dreaded:
+
+    #         table was dropped by a concurrent transaction
+
+    #     So, we need to lock around calls to the underlying
+    #     drop_relation() function.
+
+    #     https://docs.aws.amazon.com/redshift/latest/dg/r_DROP_TABLE.html
+    #     """
+  
+    #     with self.connections.fresh_transaction():
+    #             return super().drop_relation(relation)
+        
+
+    
 
     @available
     def verify_database(self, database):
@@ -125,8 +151,8 @@ class CockroachDBAdapter(SQLAdapter):
                 self.cache.add_link(referenced, dependent)
 
     def _get_catalog_schemas(self, manifest):
-        # postgres only allow one database (the main one)
-        schemas = super()._get_catalog_schemas(manifest)
+        # Cockroachdb only allow one database (the main one)
+        schemas =  super(SQLAdapter, self)._get_catalog_schemas(manifest)
         try:
             return schemas.flatten()
         except dbt.exceptions.RuntimeException as exc:
@@ -159,7 +185,7 @@ class CockroachDBAdapter(SQLAdapter):
     def add_query(
         self,
         sql: str,
-        auto_begin: bool = False,
+        auto_begin: bool = True,
         bindings: Optional[Any] = None,
         abridge_sql_log: bool = False,
     ) -> Tuple[Connection, Any]:

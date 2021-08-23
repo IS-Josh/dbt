@@ -1,20 +1,85 @@
-{% macro cockraochdb__create_table_as(temporary, relation, sql) -%}
+{% macro cockroachdb__create_table_as(temporary, relation, sql) -%}
   {%- set unlogged = config.get('unlogged', default=false) -%}
   {%- set sql_header = config.get('sql_header', none) -%}
-
+  {%- set locality = config.get('locality', default='REGIONAL BY TABLE') -%}
   {{ sql_header if sql_header is not none }}
+
+{#
+Options for Locality
+REGIONAL BY TABLE (default)
+REGIONAL BY ROW
+GLOBAL #}
+
+{%set table_sql %}
+
 
   create {% if temporary -%}
     temporary
   {%- elif unlogged -%}
     unlogged
   {%- endif %} table {{ relation }}
-  as (
+  as 
+  with my_new_table as (
+  
+  (
     {{ sql }}
-  );
+  )
+  )
+
+  select * from my_new_table where 1=2;
+  {% endset %}
+
+
+
+{%set table_sql2 %}
+
+  
+/*Dropping crdb_region column if accidently selected by source query */
+ALTER TABLE {{ relation }}  DROP COLUMN if exists crdb_region;
+/*Adding crdb_region column if accidently selected by source query */
+ALTER TABLE {{ relation }} ADD COLUMN 	crdb_region public.crdb_internal_region NOT NULL DEFAULT default_to_database_primary_region(gateway_region())::public.crdb_internal_region; 
+
+  {%- if locality == 'REGIONAL BY TABLE' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;
+  {%- elif locality == 'REGIONAL BY ROW' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY ROW;
+  {%- elif locality == 'GLOBAL' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY GLOBAL;
+  {%- endif %} 
+
+   {% endset %}
+
+
+
+
+
+
+
+
+ {% call statement('table_materialization'  , fetch_result=False, auto_begin=False) %}
+ {{table_sql}}
+{%- endcall -%}
+
+ {% call statement('table_materialization2'  , fetch_result=False, auto_begin=False) %}
+
+  
+ {{table_sq2}}
+{%- endcall -%}
+insert into  {{ relation }} 
+select * from (
+    {{ sql }}
+) my_new_table 
+
 {%- endmacro %}
 
-{% macro cockraochdb__get_create_index_sql(relation, index_dict) -%}
+
+
+
+
+
+
+
+{% macro cockroachdb__get_create_index_sql(relation, index_dict) -%}
   {%- set index_config = adapter.parse_index(index_dict) -%}
   {%- set comma_separated_columns = ", ".join(index_config.columns) -%}
   {%- set index_name = index_config.render(relation) -%}
@@ -29,7 +94,7 @@
   ({{ comma_separated_columns }});
 {%- endmacro %}
 
-{% macro cockraochdb__create_schema(relation) -%}
+{% macro cockroachdb__create_schema(relation) -%}
   {% if relation.database -%}
     {{ adapter.verify_database(relation.database) }}
   {%- endif -%}
@@ -38,7 +103,7 @@
   {%- endcall -%}
 {% endmacro %}
 
-{% macro cockraochdb__drop_schema(relation) -%}
+{% macro cockroachdb__drop_schema(relation) -%}
   {% if relation.database -%}
     {{ adapter.verify_database(relation.database) }}
   {%- endif -%}
@@ -47,7 +112,7 @@
   {%- endcall -%}
 {% endmacro %}
 
-{% macro cockraochdb__get_columns_in_relation(relation) -%}
+{% macro cockroachdb__get_columns_in_relation(relation) -%}
   {% call statement('get_columns_in_relation', fetch_result=True) %}
       select
           column_name,
@@ -69,7 +134,7 @@
 {% endmacro %}
 
 
-{% macro cockraochdb__list_relations_without_caching(schema_relation) %}
+{% macro cockroachdb__list_relations_without_caching(schema_relation) %}
   {% call statement('list_relations_without_caching', fetch_result=True) -%}
     select
       '{{ schema_relation.database }}' as database,
@@ -90,14 +155,14 @@
   {{ return(load_result('list_relations_without_caching').table) }}
 {% endmacro %}
 
-{% macro cockraochdb__information_schema_name(database) -%}
+{% macro cockroachdb__information_schema_name(database) -%}
   {% if database_name -%}
     {{ adapter.verify_database(database_name) }}
   {%- endif -%}
   information_schema
 {%- endmacro %}
 
-{% macro cockraochdb__list_schemas(database) %}
+{% macro cockroachdb__list_schemas(database) %}
   {% if database -%}
     {{ adapter.verify_database(database) }}
   {%- endif -%}
@@ -107,7 +172,7 @@
   {{ return(load_result('list_schemas').table) }}
 {% endmacro %}
 
-{% macro cockraochdb__check_schema_exists(information_schema, schema) -%}
+{% macro cockroachdb__check_schema_exists(information_schema, schema) -%}
   {% if information_schema.database -%}
     {{ adapter.verify_database(information_schema.database) }}
   {%- endif -%}
@@ -118,27 +183,27 @@
 {% endmacro %}
 
 
-{% macro cockraochdb__current_timestamp() -%}
+{% macro cockroachdb__current_timestamp() -%}
   now()
 {%- endmacro %}
 
-{% macro cockraochdb__snapshot_string_as_time(timestamp) -%}
+{% macro cockroachdb__snapshot_string_as_time(timestamp) -%}
     {%- set result = "'" ~ timestamp ~ "'::timestamp without time zone" -%}
     {{ return(result) }}
 {%- endmacro %}
 
 
-{% macro cockraochdb__snapshot_get_time() -%}
+{% macro cockroachdb__snapshot_get_time() -%}
   {{ current_timestamp() }}::timestamp without time zone
 {%- endmacro %}
 
 {#
-  cockraochdb tables have a maximum length off 63 characters, anything longer is silently truncated.
+  cockroachdb tables have a maximum length off 63 characters, anything longer is silently truncated.
   Temp relations add a lot of extra characters to the end of table namers to ensure uniqueness.
   To prevent this going over the character limit, the base_relation name is truncated to ensure
   that name + suffix + uniquestring is < 63 characters.  
 #}
-{% macro cockraochdb__make_temp_relation(base_relation, suffix) %}
+{% macro cockroachdb__make_temp_relation(base_relation, suffix) %}
     {% set dt = modules.datetime.datetime.now() %}
     {% set dtstring = dt.strftime("%H%M%S%f") %}
     {% set suffix_length = suffix|length + dtstring|length %}
@@ -161,7 +226,7 @@
   (including nested dollar-quoting), as long as they do not use this exact dollar-quoting
   label. It would be nice to just pick a new one but eventually you do have to give up.
 #}
-{% macro cockraochdb_escape_comment(comment) -%}
+{% macro cockroachdb_escape_comment(comment) -%}
   {% if comment is not string %}
     {% do exceptions.raise_compiler_error('cannot escape a non-string: ' ~ comment) %}
   {% endif %}
@@ -173,16 +238,16 @@
 {%- endmacro %}
 
 
-{% macro cockraochdb__alter_relation_comment(relation, comment) %}
-  {% set escaped_comment = cockraochdb_escape_comment(comment) %}
+{% macro cockroachdb__alter_relation_comment(relation, comment) %}
+  {% set escaped_comment = cockroachdb_escape_comment(comment) %}
   comment on {{ relation.type }} {{ relation }} is {{ escaped_comment }};
 {% endmacro %}
 
 
-{% macro cockraochdb__alter_column_comment(relation, column_dict) %}
+{% macro cockroachdb__alter_column_comment(relation, column_dict) %}
   {% for column_name in column_dict %}
     {% set comment = column_dict[column_name]['description'] %}
-    {% set escaped_comment = cockraochdb_escape_comment(comment) %}
+    {% set escaped_comment = cockroachdb_escape_comment(comment) %}
     comment on column {{ relation }}.{{ adapter.quote(column_name) if column_dict[column_name]['quote'] else column_name }} is {{ escaped_comment }};
   {% endfor %}
 {% endmacro %}

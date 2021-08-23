@@ -39,6 +39,9 @@
   {{ run_hooks(pre_hooks, inside_transaction=False) }}
 
   -- `BEGIN` happens here:
+
+
+  
   {{ run_hooks(pre_hooks, inside_transaction=True) }}
 
   -- build model

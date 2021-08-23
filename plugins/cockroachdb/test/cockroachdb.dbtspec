@@ -3,10 +3,10 @@
 # for installation and use
 
 target:
-  type: cockraochdb
+  type: cockroachdb
   # Add CI credentials here, like:
   # host: localhost
-  # port: 5432
+  # port: 26257
   # username: root
   # password: pass
 sequences:

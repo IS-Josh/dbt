@@ -47,6 +47,8 @@ setup(
         'dbt-redshift=={}'.format(package_version),
         'dbt-snowflake=={}'.format(package_version),
         'dbt-bigquery=={}'.format(package_version),
+        'dbt-cockroachdb=={}'.format(package_version),
+     
     ],
     zip_safe=False,
     classifiers=[

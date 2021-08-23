@@ -1,5 +1,5 @@
 
-name: dbt_cockraochdb
+name: dbt_cockroachdb
 version: 1.0
 config-version: 2
 

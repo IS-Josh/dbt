@@ -2,7 +2,7 @@ default:
   outputs:
 
     dev:
-      type: cockraochdb
+      type: cockroachdb
       threads: [1 or more]
       host: [host]
       port: [port]
@@ -12,7 +12,7 @@ default:
       schema: [dev_schema]
 
     prod:
-      type: cockraochdb
+      type: cockroachdb
       threads: [1 or more]
       host: [host]
       port: [port]

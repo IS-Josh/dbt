@@ -1,8 +1,7 @@
 {% macro cockroachdb__create_table_as(temporary, relation, sql) -%}
   {%- set unlogged = config.get('unlogged', default=false) -%}
   {%- set sql_header = config.get('sql_header', none) -%}
-  {%- set crdb_locality = config.get('crdb_locality', none) -%}
-   {%- set primary_key = config.get('primary_key', none) -%}
+  {%- set crdb_locality = config.get('crdb_locality', default='REGIONAL BY TABLE') -%}
   {{ sql_header if sql_header is not none }}
 
 {#
@@ -27,75 +26,49 @@ GLOBAL #}
   )
   )
 
-  select * from my_new_table 
-  
-  
-  {% if crdb_locality %}
-  where 1=2
-  {% endif %}
-
+  select * from my_new_table where 1=2
   {% endset %}
 
 
 
 {%set table_sql2 %}
+
   
-        /*Dropping crdb_region column if accidently selected by source query */
-        ALTER TABLE {{ relation }}  DROP COLUMN if exists crdb_region;
-        /*Adding crdb_region column if accidently selected by source query */
-       /* ALTER TABLE {{ relation }} ADD COLUMN 	crdb_region public.crdb_internal_region NOT NULL DEFAULT default_to_database_primary_region(gateway_region())::public.crdb_internal_region; */
+/*Dropping crdb_region column if accidently selected by source query */
+ALTER TABLE {{ relation }}  DROP COLUMN if exists crdb_region;
+/*Adding crdb_region column if accidently selected by source query */
+ALTER TABLE {{ relation }} ADD COLUMN 	crdb_region public.crdb_internal_region NOT NULL DEFAULT default_to_database_primary_region(gateway_region())::public.crdb_internal_region; 
 
-          {%- if crdb_locality == 'REGIONAL BY TABLE' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;
-          {%- elif crdb_locality == 'REGIONAL BY ROW' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY ROW;
-          {%- elif crdb_locality == 'GLOBAL' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY GLOBAL;
-          {%- endif %} 
+  {%- if locality == 'REGIONAL BY TABLE' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;
+  {%- elif locality == 'REGIONAL BY ROW' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY ROW;
+  {%- elif locality == 'GLOBAL' -%}
+  ALTER TABLE   {{ relation }} SET LOCALITY GLOBAL;
+  {%- endif %} 
 
-          {%- if primary_key -%}
-              {% for column in primary_key %}
-              ALTER TABLE  {{ relation }} alter column  {{column}} set not null;
-              {% endfor %}
-          {% endif -%}
-
-
-            {%- if primary_key -%}
-             
-         
-          ALTER TABLE   {{ relation }} ALTER PRIMARY KEY USING COLUMNS({{ primary_key|join(", ") }}) ;
-          ALTER TABLE   {{ relation }} drop column if exists rowid cascade;
-          {%- endif %} 
-
-{% endset %}
+   {% endset %}
 
 
 
 
-{% if crdb_locality %}
-          {% call statement( fetch_result=False, auto_begin=False) %}
-              {{table_sql}}
-          {%- endcall -%}
-
-          {% call statement( fetch_result=False, auto_begin=False) %}
-              {{table_sql2}}
-          {%- endcall -%}
-          
-          insert into  {{ relation }} 
-          select * from (
-              {{ sql }}
-          ) my_new_table 
-
-{%- endif %}
-
-
-{% if not  crdb_locality %}
-          {{table_sql}}
-{%- endif %} 
 
 
 
 
+ {% call statement('table_materialization'  , fetch_result=False, auto_begin=False) %}
+ {{table_sql}}
+{%- endcall -%}
+
+ {% call statement('table_materialization2'  , fetch_result=False, auto_begin=False) %}
+
+  
+ {{table_sq2}}
+{%- endcall -%}
+insert into  {{ relation }} 
+select * from (
+    {{ sql }}
+) my_new_table 
 
 {%- endmacro %}
 

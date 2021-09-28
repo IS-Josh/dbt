@@ -10,6 +10,7 @@ from dbt import flags
 from dataclasses import dataclass,field
 #from dbt.dataclass_schema import FieldEncoder, dbtClassMixin, StrEnum
 import psycopg2
+#from psycopg2 import OperationalError, errorcodes, errors
 
 
 #from dbt.adapters.sql import SQLConnectionManager
@@ -19,7 +20,8 @@ import agate
 from dbt.helper_types import Port
 from dbt.contracts.connection import (
       Connection,
-      AdapterResponse
+      AdapterResponse,
+      ConnectionState
 )
 drop_lock: Lock = dbt.flags.MP_CONTEXT.Lock()
 
@@ -50,6 +52,9 @@ class CockroachDBCredentials(Credentials):
     @property
     def type(self):
         return 'cockroachdb'
+    @property
+    def unique_field(self):
+        return self.host
 
     def _connection_keys(self):
         return ('host', 'port', 'user', 'database', 'schema', 'search_path',
@@ -83,20 +88,55 @@ class CockroachDBConnectionManager(SQLConnectionManager):
     #         self.commit()
     #         self.begin()   
     
+
     def exception_handler(self, sql):
         try:
             yield
 
         except psycopg2.DatabaseError as e:
-            logger.debug('CockroachDB error: {}'.format(str(e)))
+            msg = str(e)
+            
+            if  msg.strip() =='there is no transaction in progress':
+                    print('I OVER HERE 1')
+                    logger.debug('CRDB psycopg2 DatabaseError NTIP: {}'.format(str('The Error "there is no transaction in progress" is being caught to simulate the behaviour of postgres')))
 
-            try:
-                self.rollback_if_open()
-            except psycopg2.Error:
-                logger.debug("Failed to release connection!")
-                pass
 
-            raise dbt.exceptions.DatabaseException(str(e).strip()) from e
+            if  msg.strip() =="can't execute an empty query":
+                    print('I OVER HERE 4')
+                    logger.debug('CRDB psycopg2 DatabaseError EMPTYQUERY: {}'.format(str('EMPTYQUERY???')))
+                    
+
+            else:
+                logger.debug('CRDB psycopg2 DatabaseError: {}'.format(str(e)))
+                print('I OVER HERE 2')
+                try:
+                    #self.rollback_if_open()
+                    pass
+                    
+                except psycopg2.Error:
+                    logger.debug("Failed to release connection!")
+                    pass
+
+                except psycopg2.DatabaseError as e2:
+                    msg = str(e2)
+                    if  msg.strip()=='there is no transaction in progress':
+                        print('I OVER HERE 3')
+                        logger.debug('CRDB psycopg2 DatabaseError NTIP Rollback: {}'.format(str('The Error "there is no transaction in progress" is being caught to simulate the behaviour of postgres')))
+
+                raise dbt.exceptions.DatabaseException(str(e).strip()) from e
+
+
+
+      
+
+        except psycopg2.InternalError as e:
+            msg = str(e)
+            if msg.find('there is no transaction in progress'):
+                logger.debug('CRDB psycopg2 InternalError: {}'.format(str('The Error "there is no transaction in progress" is being caught to simulate the behaviour of postgres')))
+            #    return 'Warning: there is no transaction in progress'
+            #return 'NotInstalled'    
+
+
 
         except Exception as e:
             logger.debug("Error running SQL: {}", sql)
@@ -109,10 +149,6 @@ class CockroachDBConnectionManager(SQLConnectionManager):
                 raise
 
             raise dbt.exceptions.RuntimeException(e) from e
-
-
-
-    
 
     @classmethod
     def open(cls, connection):
@@ -159,6 +195,7 @@ class CockroachDBConnectionManager(SQLConnectionManager):
                 port=credentials.port,
                 connect_timeout=10,
                 **kwargs)
+            handle.set_session(autocommit=True)
             
             
             if credentials.role:
@@ -203,6 +240,19 @@ class CockroachDBConnectionManager(SQLConnectionManager):
 
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
 
+    def clear_transaction(self) -> None:
+        """Clear any existing transactions."""
+        conn = self.get_thread_connection()
+        if conn is not None:
+            if conn.transaction_open:
+                #self._rollback(conn)
+                pass
+            #elf.begin()
+            #self.commit()
+            pass
+
+   
+ 
 
     def add_query(
         self,
@@ -234,6 +284,8 @@ class CockroachDBConnectionManager(SQLConnectionManager):
 
             cursor = connection.handle.cursor()
             cursor.execute(sql, bindings)
+
+
             logger.debug(
                 "SQL status: {status} in {elapsed:0.2f} seconds",
                 status=self.get_response(cursor),
@@ -267,11 +319,28 @@ class CockroachDBConnectionManager(SQLConnectionManager):
         )
 
 
+    def add_savepoint(self):
+        #self.clear_transaction()
+        return self.add_query(" SAVEPONT cockroach_restart ", auto_begin=False)
+
+
+
+    def release_savepoint(self):
+        #self.clear_transaction()
+        return self.add_query(" RELEASE SAVEPONT cockroach_restart ", auto_begin=False)
+
+
+
     def add_begin_query(self):
-        return self.add_query("select 'NOT_ADDING_BEGIN_FOR_CRDB_TESTING'", auto_begin=False)
+        #self.clear_transaction()
+        return self.add_query(" Select 'NOT RUNNING BEGIN - ALREADY OPEN' ", auto_begin=False)
+
+    def add_dummy_query(self):
+        return self.add_query('select _', auto_begin=False)
+
 
     def add_commit_query(self):
-        return self.add_query('COMMIT', auto_begin=False)
+        return self.add_query('select "NOT USING TRANSACTIONS AUTOCOMMIT = TRUE"', auto_begin=False)
 
     def begin(self):
         connection = self.get_thread_connection()
@@ -286,7 +355,7 @@ class CockroachDBConnectionManager(SQLConnectionManager):
             raise dbt.exceptions.InternalException(
                 'Tried to begin a new transaction on connection "{}", but '
                 'it already had one open!'.format(connection.name))
-
+        #self.commit()
         self.add_begin_query()
 
         connection.transaction_open = True
@@ -297,6 +366,7 @@ class CockroachDBConnectionManager(SQLConnectionManager):
         self, sql: str, auto_begin: bool = False, fetch: bool = False
     ) -> Tuple[Union[AdapterResponse, str], agate.Table]:
         sql = self._add_query_comment(sql)
+        #logger.debug('EXECUTING SQL IS : {}'.format(str(sql)))
         _, cursor = self.add_query(sql, auto_begin)
         response = self.get_response(cursor)
         if fetch:
@@ -315,12 +385,16 @@ class CockroachDBConnectionManager(SQLConnectionManager):
                 )
 
         if connection.transaction_open is False:
-            raise dbt.exceptions.InternalException(
-                'Tried to commit transaction on connection "{}", but '
-                'it does not have one open!'.format(connection.name))
+           pass
+           #self.add_commit_query()
+           #raise dbt.exceptions.InternalException(
+           #     'Tried to commit transaction on connection "{}", but '
+           #    'it does not have one open!'.format(connection.name))
 
-        logger.debug('On {}: COMMIT'.format(connection.name))
-        self.add_commit_query()
+        else: 
+            logger.debug('On {}: COMMIT - WE are AutoCommit -  All transactions are committed automatically'.format(connection.name))
+       # self.add_query("select '_'", auto_begin=False)
+            #self.add_commit_query()
 
         connection.transaction_open = False
 

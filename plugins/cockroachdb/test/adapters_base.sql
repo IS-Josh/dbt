@@ -1,17 +1,8 @@
 {% macro cockroachdb__create_table_as(temporary, relation, sql) -%}
   {%- set unlogged = config.get('unlogged', default=false) -%}
   {%- set sql_header = config.get('sql_header', none) -%}
-  {%- set crdb_locality = config.get('crdb_locality', none) -%}
-   {%- set primary_key = config.get('primary_key', none) -%}
+
   {{ sql_header if sql_header is not none }}
-
-{#
-Options for Locality
-REGIONAL BY TABLE (default)
-REGIONAL BY ROW
-GLOBAL #}
-
-{%set table_sql %}
 
 
   create {% if temporary -%}
@@ -19,92 +10,10 @@ GLOBAL #}
   {%- elif unlogged -%}
     unlogged
   {%- endif %} table {{ relation }}
-  as 
-  with my_new_table as (
-  
-  (
+  as (
     {{ sql }}
-  )
-  )
-
-  select * from my_new_table 
-  
-  
-  {% if crdb_locality %}
-  where 1=2
-  {% endif %}
-
-  {% endset %}
-
-
-
-{%set table_sql2 %}
-  
-        /*Dropping crdb_region column if accidently selected by source query */
-        ALTER TABLE {{ relation }}  DROP COLUMN if exists crdb_region;
-        /*Adding crdb_region column if accidently selected by source query */
-       /* ALTER TABLE {{ relation }} ADD COLUMN 	crdb_region public.crdb_internal_region NOT NULL DEFAULT default_to_database_primary_region(gateway_region())::public.crdb_internal_region; */
-
-          {%- if crdb_locality == 'REGIONAL BY TABLE' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;
-          {%- elif crdb_locality == 'REGIONAL BY ROW' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY ROW;
-          {%- elif crdb_locality == 'GLOBAL' -%}
-          ALTER TABLE   {{ relation }} SET LOCALITY GLOBAL;
-          {%- endif %} 
-
-          {%- if primary_key -%}
-              {% for column in primary_key %}
-              ALTER TABLE  {{ relation }} alter column  {{column}} set not null;
-              {% endfor %}
-          {% endif -%}
-
-
-            {%- if primary_key -%}
-             
-         
-          ALTER TABLE   {{ relation }} ALTER PRIMARY KEY USING COLUMNS({{ primary_key|join(", ") }}) ;
-          ALTER TABLE   {{ relation }} drop column if exists rowid cascade;
-          {%- endif %} 
-
-{% endset %}
-
-
-
-
-{% if crdb_locality %}
-          {% call statement( fetch_result=False, auto_begin=False) %}
-              {{table_sql}}
-          {%- endcall -%}
-
-          {% call statement( fetch_result=False, auto_begin=False) %}
-              {{table_sql2}}
-          {%- endcall -%}
-          
-          insert into  {{ relation }} 
-          select * from (
-              {{ sql }}
-          ) my_new_table 
-
-{%- endif %}
-
-
-{% if not  crdb_locality %}
-          {{table_sql}}
-{%- endif %} 
-
-
-
-
-
+  );
 {%- endmacro %}
-
-
-
-
-
-
-
 
 {% macro cockroachdb__get_create_index_sql(relation, index_dict) -%}
   {%- set index_config = adapter.parse_index(index_dict) -%}
@@ -277,4 +186,25 @@ GLOBAL #}
     {% set escaped_comment = cockroachdb_escape_comment(comment) %}
     comment on column {{ relation }}.{{ adapter.quote(column_name) if column_dict[column_name]['quote'] else column_name }} is {{ escaped_comment }};
   {% endfor %}
+{% endmacro %}
+
+
+
+{% macro cockroachdb__drop_relation(relation) -%}
+  {% call statement('drop_relation', auto_begin=True) -%}
+    drop {{ relation.type }} if exists {{ relation }} cascade
+
+  {%- endcall %}
+
+  
+
+{% endmacro %}
+
+
+
+{% macro cockroachdb__rename_relation(from_relation, to_relation) -%}
+  {% set target_name = adapter.quote_as_configured(to_relation.identifier, 'identifier') %}
+  {% call statement('rename_relation', auto_begin=True) -%}
+    alter table {{ from_relation }} rename to {{ target_name }}
+    {% endcall %}
 {% endmacro %}

@@ -41,7 +41,7 @@ def _dbt_psycopg2_name():
 
 
 package_name = "dbt-cockroachdb"
-package_version = "0.21.0b1"
+package_version = "0.21.rc1"
 description = """The cockroachdb adpter plugin for dbt (data build tool)"""
 
 this_directory = os.path.abspath(os.path.dirname(__file__))

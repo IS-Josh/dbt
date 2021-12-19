@@ -1,8 +1,7 @@
 {% macro cockroachdb__create_table_as(temporary, relation, sql) -%}
   {%- set unlogged = config.get('unlogged', default=false) -%}
   {%- set sql_header = config.get('sql_header', none) -%}
-  {%- set crdb_locality = config.get('crdb_locality', none) -%}
-   {%- set primary_key = config.get('primary_key', none) -%}
+  {%- set locality = config.get('locality', default='NONE') -%}
   {{ sql_header if sql_header is not none }}
 
 {#
@@ -28,16 +27,14 @@ GLOBAL #}
   )
 
   select * from my_new_table 
-  
-  
-  {% if crdb_locality %}
-  where 1=2
-  {% endif %}
-
+      {%- if locality !='NONE' -%}
+      where 1=2
+      {%- endif %} 
+  ;
   {% endset %}
 
 
-
+{%- if locality !='NONE' -%}
 {%set table_sql2 %}
   
         /*Dropping crdb_region column if accidently selected by source query */
@@ -59,6 +56,16 @@ GLOBAL #}
               {% endfor %}
           {% endif -%}
 
+              {%- if locality == 'REGIONAL BY TABLE' -%}
+              ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY TABLE IN PRIMARY REGION;
+              {%- elif locality == 'REGIONAL BY ROW' -%}
+              ALTER TABLE   {{ relation }} SET LOCALITY REGIONAL BY ROW;
+              {%- elif locality == 'GLOBAL' -%}
+              ALTER TABLE   {{ relation }} SET LOCALITY GLOBAL;
+              {%- endif %} 
+    
+   {% endset %}
+{%- endif %} 
 
             {%- if primary_key -%}
              
@@ -94,7 +101,28 @@ GLOBAL #}
 {%- endif %} 
 
 
+<<<<<<< Updated upstream
 
+
+=======
+ {% call statement('table_materialization'  , fetch_result=False, auto_begin=False) %}
+ {{table_sql}}
+ {%- endcall -%}
+
+{%- if locality !='NONE' -%}
+    {% call statement('table_materialization2'  , fetch_result=False, auto_begin=False) %}
+    {{table_sq2}}
+    {%- endcall -%}
+
+
+insert into  {{ relation }} 
+select * from (
+    {{ sql }}
+) my_new_table 
+>>>>>>> Stashed changes
+
+
+{%- endif %} 
 
 
 {%- endmacro %}
